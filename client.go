@@ -937,7 +937,7 @@ func main() {
 func startCountDownTimer(timeout int) *time.Timer {
 	return time.AfterFunc(time.Duration(timeout) * time.Second, func() {
 		log.Println("Countdown ends, exit")
-		syscall.Kill(syscall.Getpid(), syscall.SIGINT)
+		platform.KillPid(syscall.Getpid())
 	})
 }
 

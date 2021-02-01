@@ -28,3 +28,7 @@ func GetDestAddrFromConn(conn net.Conn) string {
 	return ""
 
 }
+
+func KillPid(pid int) {
+	syscall.Kill(pid, syscall.SIGTERM)
+}
