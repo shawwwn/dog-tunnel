@@ -88,6 +88,9 @@ var bSrc = flag.Bool("src", false, "c: whether logging src ip, just for tcp redi
 var routeN = flag.Int("routen", 1, "c: threads(os-threads) num for route mode to parse real-addr")
 var socks5Bind = flag.String("s5bind", "", "c: bind socks5 outbound socket to ADDRESS(interface/ip/hostname)")
 var socks5BindIP net.IP // empty byte array
+var cdTime = flag.Int("countdown", 0, "c: seconds to wait-to-connect before timeout and exit. default 0 is to wait infinity.")
+var cdTimer *time.Timer
+var cdTimerOn = false
 
 var clientType = 1
 var currReadyId int32 = 0
@@ -320,6 +323,20 @@ func CreateMainClient(id string) *Client {
 }
 func CreateSessionAndLoop(bIsTcp bool, idindex int, bSmart bool) {
 	CreateSession(bIsTcp, idindex, bSmart)
+
+	// restart countdown timer if timer is stopped
+	if *cdTime!=0 && idindex==0 && !cdTimerOn {
+		if !cdTimer.Stop() {
+			select {
+			case <- cdTimer.C:
+			default:
+			}
+		}
+		cdTimer.Reset(time.Duration(*cdTime)*time.Second)
+		cdTimerOn = true
+		log.Println("reset countdown timer")
+	}
+
 	dt := 3
 	if bSmart {
 		dt = 15
@@ -375,6 +392,13 @@ func CreateSession(bIsTcp bool, idindex int, bSmart bool) bool {
 	common.WriteCrypt(s_conn, -1, eInit_action, []byte(*remoteAction), client.encode)
 	if client.smartN > 0 {
 		common.WriteCrypt(s_conn, -1, eInit_smartN, []byte(strconv.Itoa(client.smartN)), client.encode)
+	}
+
+	// stop countdown timer since connection is established
+	if *cdTime!=0 && idindex==0 {
+		log.Println("stop countdown timer")
+		cdTimer.Stop()
+		cdTimerOn = false
 	}
 
 	pinfo := &pipeInfo{conn: s_conn, total: 0, t: timeNow.now().Unix(), owner: nil, newindex: 0}
@@ -750,6 +774,9 @@ func main() {
 	} else {
 		*socks5Bind = ""
 	}
+	if *cdTime!=0 {
+		log.Println("countdown in seconds:", *cdTime)
+	}
 	if *smartCount > 0 {
 		if *remoteAction == "socks5" || *remoteAction == "route" {
 			*remoteAction += "_smart"
@@ -828,7 +855,7 @@ func main() {
 	w.Add(2)
 	go func() {
 		c := make(chan os.Signal, 1)
-		signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+		signal.Notify(c, os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
 		n := 0
 		f := func() {
 			<-c
@@ -889,6 +916,13 @@ func main() {
 			if !bHave {
 				client = CreateMainClient(id)
 			}
+
+			// start countdown timer before connection
+			if *cdTime != 0 {
+				cdTimer = startCountDownTimer(*cdTime)
+				cdTimerOn = true
+			}
+
 			for i := 0; i < *pipeN; i++ {
 				go CreateSessionAndLoop(*bTcp, i, client.bSmart)
 			}
@@ -898,6 +932,13 @@ func main() {
 	loop()
 	w.Wait()
 	log.Println("service shutdown")
+}
+
+func startCountDownTimer(timeout int) *time.Timer {
+	return time.AfterFunc(time.Duration(timeout) * time.Second, func() {
+		log.Println("Countdown ends, exit")
+		syscall.Kill(syscall.Getpid(), syscall.SIGINT)
+	})
 }
 
 type clientSession struct {
